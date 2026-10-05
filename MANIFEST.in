@@ -1,0 +1,4 @@
+include LICENSE README.md CHANGELOG.md
+graft examples
+graft tests
+global-exclude __pycache__ *.py[cod]
