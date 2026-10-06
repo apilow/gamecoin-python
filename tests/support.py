@@ -186,3 +186,13 @@ def catalog_json() -> Dict[str, Any]:
             }
         ],
     }
+
+
+def redemption_json(**over: Any) -> Dict[str, Any]:
+    data = {
+        "grants": [{"currency": "gems", "amount": 50, "balance": balance_json(bonus=150, total=150)}],
+        "items": [{"sku": "potion", "quantity": 2}],
+        "skipped": [{"sku": "fire-sword", "quantity": 1}],
+    }
+    data.update(over)
+    return data

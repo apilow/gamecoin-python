@@ -11,6 +11,7 @@ from ._core import Core
 from .resources import (
     CatalogResource,
     CheckoutsResource,
+    CodesResource,
     InventoryResource,
     LedgerResource,
     OrdersResource,
@@ -42,7 +43,7 @@ class GameCoin:
         sleep: Replaces :func:`time.sleep` between retries. A hook for tests.
 
     The client is synchronous and thread-safe: share one instance. Resources: ``catalog``, ``players``, ``wallet``,
-    ``ledger``, ``inventory``, ``purchases``, ``checkouts``, ``orders``.
+    ``ledger``, ``inventory``, ``purchases``, ``checkouts``, ``codes``, ``orders``.
 
     Raises:
         TypeError: ``secret_key`` is not a string.
@@ -57,6 +58,7 @@ class GameCoin:
     inventory: InventoryResource
     purchases: PurchasesResource
     checkouts: CheckoutsResource
+    codes: CodesResource
     orders: OrdersResource
 
     def __init__(
@@ -94,6 +96,7 @@ class GameCoin:
         self.inventory = InventoryResource(core)
         self.purchases = PurchasesResource(core)
         self.checkouts = CheckoutsResource(core)
+        self.codes = CodesResource(core)
         self.orders = OrdersResource(core)
 
     @property

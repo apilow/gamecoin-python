@@ -347,8 +347,35 @@ class PackItem:
 
 
 @dataclass(frozen=True)
+class PackAvailability:
+    """When and how many times a pack can be bought. ``None`` bounds and stock mean "no limit".
+
+    ``starts_at`` is included and ``ends_at`` excluded; ``remaining`` is the stock left in the environment of the key
+    (units held by pending, paid or fulfilled orders are already taken off); ``founder`` marks a founder pack.
+    """
+
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+    remaining: Optional[int]
+    founder: bool
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "PackAvailability":
+        return cls(
+            starts_at=_optional_datetime(data.get("startsAt")),
+            ends_at=_optional_datetime(data.get("endsAt")),
+            remaining=data.get("remaining"),
+            founder=bool(data["founder"]),
+        )
+
+
+@dataclass(frozen=True)
 class Pack:
-    """A pack sold for real money. ``price_cents`` is in ``currency`` (euros)."""
+    """A pack sold for real money. ``price_cents`` is in ``currency`` (euros).
+
+    ``availability`` is ``None`` for an ordinary pack (always on sale, no limit). The catalog lists scheduled, ended
+    and sold-out packs too: the shop decides what to show.
+    """
 
     sku: str
     name: str
@@ -359,9 +386,11 @@ class Pack:
     items: Tuple[PackItem, ...]
     badge: Optional[str]
     max_per_player: Optional[int]
+    availability: Optional[PackAvailability] = None
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> "Pack":
+        availability = data.get("availability")
         return cls(
             sku=data["sku"],
             name=data["name"],
@@ -372,16 +401,23 @@ class Pack:
             items=tuple(PackItem.from_api(i) for i in data["items"]),
             badge=data.get("badge"),
             max_per_player=data.get("maxPerPlayer"),
+            availability=None if availability is None else PackAvailability.from_api(availability),
         )
 
 
 @dataclass(frozen=True)
 class Catalog:
-    """What the game sells: active currencies, items and packs."""
+    """What the game sells: active currencies, items and packs.
+
+    While ``prelaunch`` is true a shop shows pre-orders with ``launch_at`` (set in the game settings). A game that
+    predates these settings answers ``False`` and ``None``.
+    """
 
     currencies: Tuple[Currency, ...]
     items: Tuple[Item, ...]
     packs: Tuple[Pack, ...]
+    prelaunch: bool = False
+    launch_at: Optional[datetime] = None
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> "Catalog":
@@ -389,6 +425,8 @@ class Catalog:
             currencies=tuple(Currency.from_api(c) for c in data["currencies"]),
             items=tuple(Item.from_api(i) for i in data["items"]),
             packs=tuple(Pack.from_api(p) for p in data["packs"]),
+            prelaunch=bool(data.get("prelaunch", False)),
+            launch_at=_optional_datetime(data.get("launchAt")),
         )
 
 
@@ -406,7 +444,21 @@ class OrderPack:
 
 
 @dataclass(frozen=True)
+class OrderCreatorCode:
+    """The creator code kept by an order: the code and the creator's name, never the creator's rates."""
+
+    code: str
+    creator_name: str
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "OrderCreatorCode":
+        return cls(code=data["code"], creator_name=data["creatorName"])
+
+
+@dataclass(frozen=True)
 class Order:
+    """An order for a pack. ``creator_code`` is ``None`` unless a creator code was given at checkout."""
+
     id: str
     player_id: str
     status: str
@@ -421,9 +473,11 @@ class Order:
     paid_at: Optional[datetime]
     fulfilled_at: Optional[datetime]
     refunded_at: Optional[datetime]
+    creator_code: Optional[OrderCreatorCode] = None
 
     @classmethod
     def from_api(cls, data: Mapping[str, Any]) -> "Order":
+        creator_code = data.get("creatorCode")
         return cls(
             id=data["id"],
             player_id=data["playerId"],
@@ -439,6 +493,7 @@ class Order:
             paid_at=_optional_datetime(data.get("paidAt")),
             fulfilled_at=_optional_datetime(data.get("fulfilledAt")),
             refunded_at=_optional_datetime(data.get("refundedAt")),
+            creator_code=None if creator_code is None else OrderCreatorCode.from_api(creator_code),
         )
 
 
@@ -456,3 +511,55 @@ class Checkout:
     @classmethod
     def from_api(cls, data: Mapping[str, Any], replayed: bool = False) -> "Checkout":
         return cls(order=Order.from_api(data["order"]), checkout_url=data["checkoutUrl"], replayed=replayed)
+
+
+# --- Gift codes ------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class RedeemedGrant:
+    """Free coins credited by a gift code, with the new balance of the currency."""
+
+    currency: str
+    amount: int
+    balance: Balance
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "RedeemedGrant":
+        return cls(currency=data["currency"], amount=data["amount"], balance=Balance.from_api(data["balance"]))
+
+
+@dataclass(frozen=True)
+class RedeemedItem:
+    """An item (``sku`` and ``quantity``) credited by a gift code, or skipped because the player already owns the maximum."""
+
+    sku: str
+    quantity: int
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "RedeemedItem":
+        return cls(sku=data["sku"], quantity=data["quantity"])
+
+
+@dataclass(frozen=True)
+class Redemption:
+    """Result of ``codes.redeem``: what the gift code gave.
+
+    ``grants`` are free (``bonus``) coins, ``items`` the items credited, ``skipped`` the items left out because the
+    player already owns the maximum of them. ``replayed`` is true when the API recognised the idempotency key and
+    returned the original result: nothing was credited a second time.
+    """
+
+    grants: Tuple[RedeemedGrant, ...]
+    items: Tuple[RedeemedItem, ...]
+    skipped: Tuple[RedeemedItem, ...]
+    replayed: bool = False
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any], replayed: bool = False) -> "Redemption":
+        return cls(
+            grants=tuple(RedeemedGrant.from_api(g) for g in data["grants"]),
+            items=tuple(RedeemedItem.from_api(i) for i in data["items"]),
+            skipped=tuple(RedeemedItem.from_api(i) for i in data["skipped"]),
+            replayed=replayed,
+        )

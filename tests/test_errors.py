@@ -111,6 +111,7 @@ class ErrorMappingTests(unittest.TestCase):
             "VALIDATION_FAILED", "IDEMPOTENCY_KEY_REQUIRED", "UNAUTHENTICATED", "PAYMENT_FAILED", "FORBIDDEN",
             "PLAYER_BLOCKED", "ENV_NOT_ENABLED", "NOT_FOUND", "INSUFFICIENT_FUNDS", "LIMIT_REACHED",
             "IDEMPOTENCY_CONFLICT", "CONFLICT", "RATE_LIMITED", "INTERNAL", "READ_ONLY",
+            "PACK_NOT_AVAILABLE", "PACK_SOLD_OUT",
             "NETWORK_ERROR", "TIMEOUT", "INVALID_RESPONSE",
         }
         defined = {name: value for name, value in vars(ErrorCode).items() if name.isupper()}

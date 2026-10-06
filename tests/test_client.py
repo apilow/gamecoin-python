@@ -82,7 +82,7 @@ class ConstructorTests(unittest.TestCase):
 
     def test_resources_are_exposed(self):
         client = GameCoin(KEY)
-        for name in ("catalog", "players", "wallet", "ledger", "inventory", "purchases", "checkouts", "orders"):
+        for name in ("catalog", "players", "wallet", "ledger", "inventory", "purchases", "checkouts", "codes", "orders"):
             self.assertTrue(hasattr(client, name), name)
 
 
@@ -103,7 +103,7 @@ class RequestHeaderTests(unittest.TestCase):
         client.catalog.get()
         user_agent = transport.last.headers["User-Agent"]
         self.assertEqual(user_agent, f"gamecoin-python/{gamecoin.__version__} (python/{__import__('platform').python_version()})")
-        self.assertRegex(user_agent, r"^gamecoin-python/0\.2\.0 \(python/3\.\d+\.\d+\)$")
+        self.assertRegex(user_agent, r"^gamecoin-python/0\.3\.0 \(python/3\.\d+\.\d+\)$")
 
     def test_json_bodies_carry_a_content_type(self):
         client, transport, _ = make_client(ok({"token": "gc_pt_x", "expiresAt": "2026-10-05T12:00:00Z"}), ok(movement_json()))

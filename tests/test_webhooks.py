@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 import gamecoin
 from gamecoin import (
     Order,
+    OrderCreatorCode,
     WalletCredited,
     WebhookEvent,
     WebhookEventType,
@@ -281,6 +282,17 @@ class PayloadTests(ReasonMixin, unittest.TestCase):
                 self.assertEqual(event.data.pack.sku, "gems-500")
                 self.assertEqual(event.data.paid_at, datetime(2026, 10, 6, 10, 0, 1, tzinfo=timezone.utc))
                 self.assertIsNone(event.data.refunded_at)
+
+    def test_order_events_with_and_without_a_creator_code(self):
+        with_code = order_json(status="fulfilled", creatorCode={"code": "ALICE10", "creatorName": "Alice"})
+        event = construct(body_of(envelope("order.fulfilled", with_code)))
+        self.assertEqual(event.data.creator_code, OrderCreatorCode("ALICE10", "Alice"))
+        for payload in (order_json(status="fulfilled"), order_json(status="fulfilled", creatorCode=None)):
+            self.assertIsNone(construct(body_of(envelope("order.fulfilled", payload))).data.creator_code)
+        broken = order_json(status="fulfilled", creatorCode={"code": "ALICE10"})
+        with self.assertRaises(WebhookSignatureError) as caught:
+            construct(body_of(envelope("order.fulfilled", broken)))
+        self.assertEqual(caught.exception.reason, WebhookSignatureReason.INVALID_PAYLOAD)
 
     def test_wallet_credited(self):
         data = {

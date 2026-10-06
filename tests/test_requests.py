@@ -253,6 +253,8 @@ class ArgumentValidationTests(unittest.TestCase):
         self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", success_url=""))
         self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", locale=""))
         self.assert_refused(TypeError, lambda c: c.checkouts.create("ext:u", pack_sku="p", locale=33))
+        self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", creator_code=""))
+        self.assert_refused(TypeError, lambda c: c.checkouts.create("ext:u", pack_sku="p", creator_code=33))
         self.assert_refused(TypeError, lambda c: c.players.upsert("ext:u", birth_year="1990"))
         self.assert_refused(TypeError, lambda c: c.checkouts.create("ext:u", pack_sku="p", country=33))
 

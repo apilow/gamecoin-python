@@ -17,6 +17,7 @@ from .models import (
     Player,
     PlayerToken,
     Purchase,
+    Redemption,
     Wallet,
 )
 from ._validate import PlayerLike
@@ -281,6 +282,7 @@ class CheckoutsResource(_Resource):
         cancel_url: Optional[str] = None,
         country: Optional[str] = None,
         locale: Optional[str] = None,
+        creator_code: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Checkout:
         """Starts the purchase of a pack with real money: send the player to ``checkout.checkout_url``.
@@ -288,6 +290,10 @@ class CheckoutsResource(_Resource):
         ``country`` (ISO 3166-1 alpha-2) sets the tax country of the order. ``locale`` (``"fr"``, ``"en"`` or
         ``"nl"``) sets the language of the hosted payment page, the receipt and the e-mails of the order; the API
         ignores any other value, and a pending order that is reused takes the language of the latest request.
+        ``creator_code`` is a creator's code typed by the buyer: the order keeps it, the buyer gets a bonus of free coins on
+        delivery and the creator a commission. A refused code is a ``VALIDATION_FAILED`` error with
+        ``details["fieldErrors"]["creatorCode"] == ["CODE_INVALID"]``. A pack outside its sale window or out of stock is
+        refused with ``PACK_NOT_AVAILABLE`` (``details`` ``startsAt`` and ``endsAt``) or ``PACK_SOLD_OUT``.
         Coins and items are credited when the order is paid; follow the order with :meth:`OrdersResource.get`.
         """
         path = self._player_path(player, "/checkouts")
@@ -297,11 +303,38 @@ class CheckoutsResource(_Resource):
             ("cancelUrl", cancel_url),
             ("country", country),
             ("locale", locale),
+            ("creatorCode", creator_code),
         ):
             if value is not None:
                 body[key] = v.require_str(value, key)
         return self._core.request(
             "POST", path, Checkout.from_api, body=body, idempotent=True, idempotency_key=v.idempotency_key(idempotency_key)
+        )
+
+
+class CodesResource(_Resource):
+    def redeem(
+        self,
+        player: PlayerLike,
+        code: str,
+        *,
+        idempotency_key: Optional[str] = None,
+    ) -> Redemption:
+        """Redeems a gift code for the player: free (``bonus``) coins and items the studio chose.
+
+        Pass the code as the player typed it: the API ignores case, spaces and dashes, so the SDK does not normalise it.
+        An unknown, expired, used up, disabled or already used code is always the same ``VALIDATION_FAILED`` error with
+        ``details["fieldErrors"]["code"] == ["CODE_INVALID"]``, never retried. ``PLAYER_BLOCKED``, ``LIMIT_REACHED``,
+        ``CONFLICT`` and ``RATE_LIMITED`` come through the usual error mapping. Safe to retry: the same
+        ``idempotency_key`` never credits twice (``replayed`` tells).
+        """
+        return self._core.request(
+            "POST",
+            self._player_path(player, "/codes/redeem"),
+            Redemption.from_api,
+            body={"code": v.require_str(code, "code")},
+            idempotent=True,
+            idempotency_key=v.idempotency_key(idempotency_key),
         )
 
 

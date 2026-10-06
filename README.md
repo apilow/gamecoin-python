@@ -160,6 +160,19 @@ except GameCoinError as error:
 
 `catalog.get()` lists the active currencies, items (with their price) and packs of your game.
 
+Packs can have a sale window and a limited stock. `pack.availability` is `None` for an ordinary pack (always on sale);
+otherwise it is a `PackAvailability` with `starts_at` and `ends_at` (aware `datetime` or `None`), `remaining` (the stock
+left, `None` when unlimited) and `founder`. The catalog also lists packs that are scheduled, ended or sold out: your shop
+decides what to show. While `catalog.prelaunch` is `True`, show pre-orders with the date `catalog.launch_at`.
+
+```python
+catalog = gamecoin.catalog.get()
+for pack in catalog.packs:
+    window = pack.availability
+    if window is not None and window.remaining == 0:
+        print(pack.sku, "is sold out")
+```
+
 ## Checkout, orders and refunds
 
 A **pack** is sold for real money. `checkouts.create` opens an order and returns the hosted payment page; send the
@@ -173,6 +186,7 @@ checkout = gamecoin.checkouts.create(
     cancel_url="https://mygame.example/shop",           # optional
     country="BE",                                        # tax country, ISO 3166-1 alpha-2 (optional)
     locale="nl",                                         # language of the payment page and e-mails: "fr", "en" or "nl" (optional)
+    creator_code="ALICE10",                              # a creator's code typed by the buyer (optional)
 )
 print(checkout.order.status, checkout.checkout_url)      # "pending", then the page to open
 
@@ -183,6 +197,29 @@ print(order.status, order.amount_cents, order.paid_at)   # follow the order: pen
 `locale` (`"fr"`, `"en"` or `"nl"`) is the language of the hosted payment page, the receipt and the e-mails of the order.
 It is not sent when you leave it out, the API ignores any other value, and a pending order that is reused takes the
 language of the latest request.
+
+`creator_code` is a **creator code** typed by the buyer: the order keeps it (`order.creator_code` is `None` or an
+`OrderCreatorCode` with `code` and `creator_name`, never the creator's rates), the buyer gets a bonus of free coins
+when the order is delivered and the creator earns a commission. A refused code (unknown, disabled, not valid for the
+pack, or the creator's own player) is a `VALIDATION_FAILED` error:
+
+```python
+try:
+    gamecoin.checkouts.create(player, pack_sku="gems-500", creator_code=typed_by_the_player)
+except GameCoinError as error:
+    if error.code == ErrorCode.VALIDATION_FAILED and "creatorCode" in error.details.get("fieldErrors", {}):
+        print("This creator code is not valid.")             # fieldErrors["creatorCode"] == ["CODE_INVALID"]
+    elif error.code == ErrorCode.PACK_NOT_AVAILABLE:
+        print(error.details["startsAt"], error.details["endsAt"])   # ISO 8601 text or None
+    elif error.code == ErrorCode.PACK_SOLD_OUT:
+        print("No unit left of", error.details["packSku"])
+    else:
+        raise
+```
+
+A pack outside its sale window is refused with `PACK_NOT_AVAILABLE` and a pack without a unit left with
+`PACK_SOLD_OUT` (both HTTP 409, never retried). The window is checked when the order is created: an order created in
+time stays payable.
 
 Coins and items are credited when the order is paid. Poll `orders.get` (or wait for the player to come back to your
 `success_url`) before telling them it worked. Statuses are in `gamecoin.OrderStatus`.
@@ -198,6 +235,39 @@ except GameCoinError as error:
 
 A refund has no idempotency key, so the SDK retries it on `429` only. After a network error or a `5xx` it raises, and
 you check the order with `orders.get` before trying again.
+
+## Codes
+
+A **gift code** gives a player free coins (the `bonus` part of a balance) and items that your studio chose: limited
+uses, one use per player, optional expiry. Redeem it for a player from your backend:
+
+```python
+from gamecoin import ErrorCode, GameCoinError
+
+try:
+    redemption = gamecoin.codes.redeem(player, typed_by_the_player)      # pass the code as typed
+except GameCoinError as error:
+    if error.code == ErrorCode.VALIDATION_FAILED:                      # fieldErrors["code"] == ["CODE_INVALID"]
+        print("This code is not valid.")
+    else:
+        raise
+else:
+    for grant in redemption.grants:
+        print(f"+{grant.amount} {grant.currency}, balance: {grant.balance.total}")
+    for item in redemption.items:
+        print(f"+{item.quantity} x {item.sku}")
+    for item in redemption.skipped:                                      # the player already owns the maximum
+        print(f"{item.sku} skipped")
+```
+
+The server ignores case, spaces and dashes, so the SDK sends the code exactly as typed. Every refusal (unknown,
+expired, used up, disabled, already used by this player, or a creator code) is the same `VALIDATION_FAILED` error with
+`details["fieldErrors"]["code"] == ["CODE_INVALID"]`: nothing tells a guess apart from a real code, and it is never
+retried. `PLAYER_BLOCKED`, `LIMIT_REACHED` (the player owns the maximum of every item of the code), `CONFLICT` and
+`RATE_LIMITED` (attempts are limited) come through the usual [error mapping](#errors). `codes.redeem` carries an
+idempotency key like every mutation: the same `idempotency_key` never credits twice, and `redemption.replayed` tells.
+
+Creator codes are a different thing: they are given to `checkouts.create` (see [Checkout](#checkout-orders-and-refunds)).
 
 ## Webhooks
 
@@ -272,7 +342,7 @@ having verified its signature.
 ## Idempotency and retries
 
 Every call that changes something (`wallet.grant`, `wallet.spend`, `inventory.grant`, `inventory.consume`,
-`purchases.create`, `checkouts.create`) sends an `Idempotency-Key`. Without your help the SDK generates a UUID v4
+`purchases.create`, `checkouts.create`, `codes.redeem`) sends an `Idempotency-Key`. Without your help the SDK generates a UUID v4
 **once per call** and reuses it for each retry of that call, so a retried `grant` never credits twice.
 
 Give your own key when the same action may reach your code twice (a webhook delivered again, a job restarted):
@@ -324,7 +394,7 @@ except GameCoinError as error:
 
 Codes you will meet: `VALIDATION_FAILED`, `UNAUTHENTICATED`, `FORBIDDEN`, `PLAYER_BLOCKED`, `NOT_FOUND`,
 `INSUFFICIENT_FUNDS`, `LIMIT_REACHED`, `IDEMPOTENCY_CONFLICT`, `CONFLICT`, `RATE_LIMITED`, `PAYMENT_FAILED`,
-`ENV_NOT_ENABLED`, `INTERNAL`. The API reference describes each one.
+`ENV_NOT_ENABLED`, `PACK_NOT_AVAILABLE`, `PACK_SOLD_OUT`, `INTERNAL`. The API reference describes each one.
 
 Arguments that are wrong on their face (an empty player, `amount=-5`, `quantity=1.5`) never reach the network: they
 raise `ValueError` or `TypeError` at once.
@@ -360,7 +430,7 @@ GAMECOIN_SECRET_KEY=gc_sk_test_... GAMECOIN_BASE_URL=http://localhost:3400 pytho
 
 ## Status
 
-**Pre-release (0.2.0).** The API runs in test mode with simulated payments; real payments are not available yet.
+**Pre-release (0.3.0).** The API runs in test mode with simulated payments; real payments are not available yet.
 This SDK is synchronous only.
 
 ## Licence

@@ -4,6 +4,25 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - Unreleased
+
+0.3.0 — gift codes; creator code on checkouts; pack availability.
+
+### Added
+
+- `codes.redeem(player, code, *, idempotency_key=None)`: redeems a gift code for a player and returns a `Redemption`
+  (`grants`, `items`, `skipped`, `replayed`). The code is sent as typed: the API ignores case, spaces and dashes. A code
+  that is unknown, expired, used up, disabled or already used is always `VALIDATION_FAILED` with
+  `details["fieldErrors"]["code"] == ["CODE_INVALID"]`, and is never retried. New objects `Redemption`, `RedeemedGrant`
+  and `RedeemedItem`.
+- `creator_code` argument on `checkouts.create` (sent as `creatorCode`, not sent when absent). A refused code is
+  `VALIDATION_FAILED` with `details["fieldErrors"]["creatorCode"] == ["CODE_INVALID"]`.
+- `Order.creator_code` (`None` or `OrderCreatorCode(code, creator_name)`), also on the `order.*` webhook events.
+- `Pack.availability` (`None` or `PackAvailability(starts_at, ends_at, remaining, founder)`), `Catalog.prelaunch` and
+  `Catalog.launch_at`.
+- `ErrorCode.PACK_NOT_AVAILABLE` (`details["startsAt"]` and `details["endsAt"]`, ISO 8601 text or `None`) and
+  `ErrorCode.PACK_SOLD_OUT` (`details["packSku"]`), both HTTP 409 on `checkouts.create`.
+
 ## [0.2.0] - Unreleased
 
 0.2.0 — `locale` on checkouts; webhook signature verification.
