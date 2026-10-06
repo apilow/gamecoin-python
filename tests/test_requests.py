@@ -176,13 +176,23 @@ class BodyAndQueryTests(unittest.TestCase):
         self.assertEqual(body_of(transport.last), {"sku": "potion", "quantity": 3})
 
     def test_checkouts(self):
-        client, transport, _ = make_client(*[ok({"order": order_json(), "checkoutUrl": "https://pay.test/x"}, 201)] * 2)
+        client, transport, _ = make_client(*[ok({"order": order_json(), "checkoutUrl": "https://pay.test/x"}, 201)] * 4)
         client.checkouts.create("ext:u", pack_sku="gems-500")
-        self.assertEqual(body_of(transport.last), {"packSku": "gems-500"})
-        client.checkouts.create("ext:u", pack_sku="gems-500", success_url="https://game.test/ok", cancel_url="https://game.test/no", country="BE")
+        self.assertEqual(body_of(transport.last), {"packSku": "gems-500"})  # no locale sent when absent
+        client.checkouts.create("ext:u", pack_sku="gems-500", locale="nl")
+        self.assertEqual(body_of(transport.last), {"packSku": "gems-500", "locale": "nl"})
+        client.checkouts.create("ext:u", pack_sku="gems-500", locale="xx")  # the API ignores unknown languages
+        self.assertEqual(body_of(transport.last), {"packSku": "gems-500", "locale": "xx"})
+        client.checkouts.create("ext:u", pack_sku="gems-500", success_url="https://game.test/ok", cancel_url="https://game.test/no", country="BE", locale="fr")
         self.assertEqual(
             body_of(transport.last),
-            {"packSku": "gems-500", "successUrl": "https://game.test/ok", "cancelUrl": "https://game.test/no", "country": "BE"},
+            {
+                "packSku": "gems-500",
+                "successUrl": "https://game.test/ok",
+                "cancelUrl": "https://game.test/no",
+                "country": "BE",
+                "locale": "fr",
+            },
         )
 
     def test_orders(self):
@@ -241,6 +251,8 @@ class ArgumentValidationTests(unittest.TestCase):
             self.assert_refused(ValueError, lambda c: c.players.upsert("ext:u", **{field: ""}))
         self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", country=""))
         self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", success_url=""))
+        self.assert_refused(ValueError, lambda c: c.checkouts.create("ext:u", pack_sku="p", locale=""))
+        self.assert_refused(TypeError, lambda c: c.checkouts.create("ext:u", pack_sku="p", locale=33))
         self.assert_refused(TypeError, lambda c: c.players.upsert("ext:u", birth_year="1990"))
         self.assert_refused(TypeError, lambda c: c.checkouts.create("ext:u", pack_sku="p", country=33))
 

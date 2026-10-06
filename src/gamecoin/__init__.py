@@ -9,7 +9,8 @@
 
 from ._version import __version__
 from .client import DEFAULT_BASE_URL, GameCoin
-from .errors import ErrorCode, GameCoinError
+from . import webhooks
+from .errors import ErrorCode, GameCoinError, WebhookSignatureError, WebhookSignatureReason
 from .models import (
     Balance,
     BalanceAfter,
@@ -39,6 +40,16 @@ from .models import (
 )
 from .resources import UNSET, ext
 from .transport import HttpRequest, HttpResponse, Transport, UrllibTransport
+from .webhooks import (
+    DEFAULT_TOLERANCE_SECONDS,
+    SIGNATURE_HEADER,
+    WalletCredit,
+    WalletCredited,
+    WebhookEvent,
+    WebhookEventType,
+    WebhookTest,
+    construct_event,
+)
 
 __all__ = [
     "__version__",
@@ -82,4 +93,16 @@ __all__ = [
     "HttpResponse",
     "Transport",
     "UrllibTransport",
+    # webhooks
+    "webhooks",
+    "construct_event",
+    "WebhookEvent",
+    "WebhookEventType",
+    "WebhookSignatureError",
+    "WebhookSignatureReason",
+    "WalletCredit",
+    "WalletCredited",
+    "WebhookTest",
+    "SIGNATURE_HEADER",
+    "DEFAULT_TOLERANCE_SECONDS",
 ]

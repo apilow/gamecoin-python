@@ -82,3 +82,41 @@ class GameCoinError(Exception):
             f"GameCoinError(code={self.code!r}, status={self.status!r}, message={self.message!r}, "
             f"details={self.details!r}, retry_after={self.retry_after!r})"
         )
+
+
+class WebhookSignatureReason:
+    """Values of :attr:`WebhookSignatureError.reason`."""
+
+    MISSING_HEADER = "missing_header"
+    MALFORMED_HEADER = "malformed_header"
+    NO_MATCHING_SIGNATURE = "no_matching_signature"
+    TIMESTAMP_OUT_OF_TOLERANCE = "timestamp_out_of_tolerance"
+    INVALID_PAYLOAD = "invalid_payload"
+
+
+class WebhookSignatureError(Exception):
+    """A webhook call that must not be trusted: see :func:`gamecoin.webhooks.construct_event`.
+
+    It does **not** extend :class:`GameCoinError`, which describes a failed API call. Answer ``400`` and do nothing
+    with the body.
+
+    Attributes:
+        reason: one of the :class:`WebhookSignatureReason` values: ``"missing_header"``, ``"malformed_header"``,
+            ``"no_matching_signature"``, ``"timestamp_out_of_tolerance"`` or ``"invalid_payload"`` (the body is not
+            JSON, or not an event envelope).
+        message: a short description. It never contains the signing secret, the body or a signature.
+    """
+
+    reason: str
+    message: str
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(reason, message)  # both values in args: the error survives pickling
+        self.reason = reason
+        self.message = message
+
+    def __str__(self) -> str:
+        return f"{self.reason}: {self.message}"
+
+    def __repr__(self) -> str:
+        return f"WebhookSignatureError(reason={self.reason!r}, message={self.message!r})"

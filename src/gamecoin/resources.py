@@ -280,16 +280,24 @@ class CheckoutsResource(_Resource):
         success_url: Optional[str] = None,
         cancel_url: Optional[str] = None,
         country: Optional[str] = None,
+        locale: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Checkout:
         """Starts the purchase of a pack with real money: send the player to ``checkout.checkout_url``.
 
-        ``country`` (ISO 3166-1 alpha-2) sets the tax country of the order. Coins and items are credited when the
-        order is paid; follow the order with :meth:`OrdersResource.get`.
+        ``country`` (ISO 3166-1 alpha-2) sets the tax country of the order. ``locale`` (``"fr"``, ``"en"`` or
+        ``"nl"``) sets the language of the hosted payment page, the receipt and the e-mails of the order; the API
+        ignores any other value, and a pending order that is reused takes the language of the latest request.
+        Coins and items are credited when the order is paid; follow the order with :meth:`OrdersResource.get`.
         """
         path = self._player_path(player, "/checkouts")
         body: Dict[str, Any] = {"packSku": v.require_str(pack_sku, "pack_sku")}
-        for key, value in (("successUrl", success_url), ("cancelUrl", cancel_url), ("country", country)):
+        for key, value in (
+            ("successUrl", success_url),
+            ("cancelUrl", cancel_url),
+            ("country", country),
+            ("locale", locale),
+        ):
             if value is not None:
                 body[key] = v.require_str(value, key)
         return self._core.request(

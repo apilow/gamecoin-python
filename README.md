@@ -6,6 +6,7 @@ only place that can credit coins. (The browser SDK uses a publishable key and ca
 
 - Pure standard library: **no dependency**, Python 3.9 and later.
 - Typed (`py.typed`): frozen dataclasses for every object, timezone-aware `datetime` fields.
+- Webhook signature verification built in: [`webhooks.construct_event`](#webhooks), no client needed.
 - Safe to retry: every mutation carries an idempotency key and the SDK retries network errors, `5xx` and `429` for you.
 - Synchronous only in this version (no `asyncio`); see [Configuration](#configuration) for async apps.
 
@@ -171,12 +172,17 @@ checkout = gamecoin.checkouts.create(
     success_url="https://mygame.example/shop/thanks",   # where the player lands after paying (optional)
     cancel_url="https://mygame.example/shop",           # optional
     country="BE",                                        # tax country, ISO 3166-1 alpha-2 (optional)
+    locale="nl",                                         # language of the payment page and e-mails: "fr", "en" or "nl" (optional)
 )
 print(checkout.order.status, checkout.checkout_url)      # "pending", then the page to open
 
 order = gamecoin.orders.get(checkout.order.id)
 print(order.status, order.amount_cents, order.paid_at)   # follow the order: pending -> paid -> fulfilled
 ```
+
+`locale` (`"fr"`, `"en"` or `"nl"`) is the language of the hosted payment page, the receipt and the e-mails of the order.
+It is not sent when you leave it out, the API ignores any other value, and a pending order that is reused takes the
+language of the latest request.
 
 Coins and items are credited when the order is paid. Poll `orders.get` (or wait for the player to come back to your
 `success_url`) before telling them it worked. Statuses are in `gamecoin.OrderStatus`.
@@ -192,6 +198,76 @@ except GameCoinError as error:
 
 A refund has no idempotency key, so the SDK retries it on `429` only. After a network error or a `5xx` it raises, and
 you check the order with `orders.get` before trying again.
+
+## Webhooks
+
+GameCoin can call **your server** when an order is delivered, refunded or disputed (declare an endpoint in the
+dashboard; it shows a signing secret, `whsec_gc_...`, once). Every call is signed. `webhooks.construct_event` checks the
+signature and the age of the call, and returns the event: it is a plain function, so it needs no client and makes no
+request.
+
+> **Pass the raw body.** The signature covers the body byte for byte. Give `construct_event` the request body exactly as
+> received (`bytes` or `str`), **before** any JSON parsing: a body that was parsed and serialized again can differ by one
+> character, and then no signature matches. A parsed object is refused with a `TypeError`. In Flask that is
+> `request.get_data()`, not `request.json`.
+
+```python
+import os
+
+from flask import Flask, request
+from gamecoin import WebhookEventType, WebhookSignatureError, webhooks
+
+app = Flask(__name__)
+WEBHOOK_SECRET = os.environ["GAMECOIN_WEBHOOK_SECRET"]       # whsec_gc_..., kept on your server only
+
+@app.post("/gamecoin/webhook")
+def gamecoin_webhook():
+    try:
+        event = webhooks.construct_event(
+            request.get_data(),                              # the raw body
+            request.headers.get("GameCoin-Signature"),
+            WEBHOOK_SECRET,
+        )
+    except WebhookSignatureError as error:
+        print("refused:", error.reason)                      # e.g. "no_matching_signature"
+        return "", 400
+
+    if already_processed(event.id):                          # at-least-once delivery: the same id can come twice
+        return "", 200
+    if event.type == WebhookEventType.ORDER_FULFILLED:
+        unlock_purchase(event.data.player_id, event.data.pack.sku)   # event.data is an Order
+    mark_processed(event.id)
+    return "", 200                                           # answer 2xx within 10 seconds
+```
+
+A runnable version lives in [`examples/webhook_flask.py`](examples/webhook_flask.py) (`pip install flask` first).
+
+`construct_event(raw_body, signature_header, secret, *, tolerance_seconds=300, now=None)`:
+
+- `signature_header` is the `GameCoin-Signature` header, `t=<unix seconds>,v1=<hex>[,v1=<hex>...]`; pass `None` when it
+  is absent. The signature is the HMAC-SHA256 of `"<t>." + raw_body` keyed with the secret; **every** `v1` is compared, in
+  constant time, and unknown keys of the header are ignored.
+- `tolerance_seconds` is how far `t` may be from your clock, in the past or the future. `0` turns the check off. `now`
+  replaces the system clock (Unix seconds, an aware `datetime`, or a callable returning one): handy in tests.
+- The secret is trimmed. It never appears in an error or a `repr`.
+- Wrong arguments (a parsed body, an empty secret) raise `TypeError` or `ValueError`: that is a bug in your code.
+- A call that must not be trusted raises `WebhookSignatureError`, which does **not** extend `GameCoinError`. Its
+  `reason` is one of the `WebhookSignatureReason` constants: `missing_header`, `malformed_header`,
+  `no_matching_signature`, `timestamp_out_of_tolerance`, `invalid_payload` (the body is not JSON or not an event). Its
+  message never contains the secret, the body or a signature. Answer `400` and do nothing with the body.
+
+The result is a `WebhookEvent` with `id`, `type`, `created_at` (aware `datetime`), `env` (`"test"` or `"live"`) and `data`:
+
+| `type` (constants in `WebhookEventType`) | `data` |
+|---|---|
+| `order.fulfilled`, `order.refunded`, `order.chargeback` | an `Order`, as returned by `orders.get` |
+| `wallet.credited` | `WalletCredited`: `player_id`, `order_id`, `credits` (tuple of `WalletCredit`: `currency`, `paid`, `bonus`) |
+| `webhook.test` | `WebhookTest`: `message` |
+| any other type | the decoded JSON (a `dict`), so a newer API never breaks an older SDK |
+
+Use `event.id` to process an event **once**: GameCoin delivers at least once, so the same event can arrive twice. The
+wallet and the inventory are already updated when you are notified: never grant coins because an event says so without
+having verified its signature.
 
 ## Idempotency and retries
 
@@ -284,7 +360,7 @@ GAMECOIN_SECRET_KEY=gc_sk_test_... GAMECOIN_BASE_URL=http://localhost:3400 pytho
 
 ## Status
 
-**Pre-release (0.1.0).** The API runs in test mode with simulated payments; real payments are not available yet.
+**Pre-release (0.2.0).** The API runs in test mode with simulated payments; real payments are not available yet.
 This SDK is synchronous only.
 
 ## Licence
