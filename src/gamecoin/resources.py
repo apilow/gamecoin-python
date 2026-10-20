@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Mapping, Optional, Union
+from typing import Any, Dict, Iterator, List, Mapping, Optional, Sequence, Union
 
+from . import _catalog_body as b
 from . import _validate as v
 from ._core import RETRY_RATE_LIMIT_ONLY, Core
 from .models import (
@@ -12,10 +13,17 @@ from .models import (
     InventoryItem,
     LedgerEntry,
     LedgerPage,
+    ManagedCurrency,
+    ManagedItem,
+    ManagedPack,
+    ManagedPackAvailability,
     Movement,
     Order,
+    PackGrant,
+    PackItem,
     Player,
     PlayerToken,
+    Price,
     Purchase,
     Redemption,
     Wallet,
@@ -367,3 +375,269 @@ def _item_body(sku: str, quantity: Optional[int]) -> Dict[str, Any]:
     if quantity is not None:
         body["quantity"] = v.positive_int(quantity, "quantity")
     return body
+
+
+# --- Catalog management ----------------------------------------------------------------------------------------
+# The catalog is shared by the ``test`` and ``live`` environments of the game: a resource created with a test key exists
+# for live keys too. The code or the sku is the natural key of a create (a taken one is ``CONFLICT``), so a create has no
+# idempotency key and is retried on ``429`` only, like a refund; changes, archives and reads are retried as usual.
+
+
+def _managed_body(fields: Dict[str, Any]) -> Dict[str, Any]:
+    """The given fields of an update, minus those left as :data:`UNSET`."""
+    return {key: value for key, value in fields.items() if value is not UNSET}
+
+
+class CurrenciesResource(_Resource):
+    """The currencies of the game: ``create``, ``get``, ``update``, ``archive``, ``list``."""
+
+    @staticmethod
+    def _path(code: str) -> str:
+        return f"/currencies/{v.segment(v.require_str(code, 'code'))}"
+
+    def create(self, *, code: str, name: str, purchasable: Optional[bool] = None) -> ManagedCurrency:
+        """Creates a currency. Its ``code`` is final. A taken code (archived currencies keep theirs) is ``CONFLICT`` with
+        ``details["fieldErrors"]["code"] == ["CODE_TAKEN"]``; an invalid one is ``VALIDATION_FAILED``.
+
+        ``purchasable`` (default true): packs can sell the currency for real money; false for a currency that is only given.
+        After a network error, a timeout or a ``5xx`` the outcome is unknown: read the currency back with :meth:`get`.
+        """
+        body: Dict[str, Any] = {"code": b.text(code, "code"), "name": b.text(name, "name")}
+        if purchasable is not None:
+            body["purchasable"] = b.boolean(purchasable, "purchasable")
+        return self._core.request(
+            "POST", "/currencies", lambda d, _: ManagedCurrency.from_api(d), body=body, retry=RETRY_RATE_LIMIT_ONLY
+        )
+
+    def get(self, code: str) -> ManagedCurrency:
+        """A currency, archived ones included; ``NOT_FOUND`` for an unknown code."""
+        return self._core.request("GET", self._path(code), lambda d, _: ManagedCurrency.from_api(d))
+
+    def update(
+        self,
+        code: str,
+        *,
+        name: Union[str, _Unset] = UNSET,
+        purchasable: Union[bool, _Unset] = UNSET,
+    ) -> ManagedCurrency:
+        """Changes a currency: an argument left out is unchanged. ``purchasable`` cannot become false while a pack that
+        is not archived sells the currency for money (``CONFLICT``, ``details["blockedBy"]["packs"]``). An archived
+        currency cannot be changed (``CONFLICT``)."""
+        path = self._path(code)
+        body = _managed_body(
+            {
+                "name": UNSET if name is UNSET else b.text(name, "name"),
+                "purchasable": UNSET if purchasable is UNSET else b.boolean(purchasable, "purchasable"),
+            }
+        )
+        return self._core.request("PATCH", path, lambda d, _: ManagedCurrency.from_api(d), body=body)
+
+    def archive(self, code: str) -> ManagedCurrency:
+        """Archives a currency (nothing is deleted; balances stay) and returns it. Refused with ``CONFLICT``
+        (``details["blockedBy"]``) while an active pack credits it or an active item is priced in it. Archiving an
+        archived currency has no effect."""
+        return self._core.request("DELETE", self._path(code), lambda d, _: ManagedCurrency.from_api(d))
+
+    def list(self, *, include_archived: bool = False) -> List[ManagedCurrency]:
+        """The currencies of the game, oldest first; the archived ones only with ``include_archived=True``."""
+        query = b.include_archived(include_archived)
+        return self._core.request(
+            "GET", "/currencies", lambda d, _: [ManagedCurrency.from_api(c) for c in d["currencies"]], query=query
+        )
+
+
+class ItemsResource(_Resource):
+    """The items of the game: ``create``, ``get``, ``update``, ``archive``, ``list``."""
+
+    @staticmethod
+    def _path(sku: str) -> str:
+        return f"/items/{v.segment(v.require_str(sku, 'sku'))}"
+
+    def create(
+        self,
+        *,
+        sku: str,
+        name: str,
+        type: str,
+        description: Optional[str] = None,
+        price: Union[Price, Mapping[str, Any], None] = None,
+        max_owned: Union[int, None, _Unset] = UNSET,
+        client_purchasable: Optional[bool] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+    ) -> ManagedItem:
+        """Creates an item. Its ``sku`` and ``type`` (``"consumable"`` or ``"durable"``) are final. A taken sku is
+        ``CONFLICT`` with ``details["fieldErrors"]["sku"] == ["SKU_TAKEN"]``; an unknown price currency, or
+        ``client_purchasable`` without a price, is ``VALIDATION_FAILED``.
+
+        ``price`` is a :class:`~gamecoin.models.Price` or ``{"currency": "gems", "amount": 20}``; leave it out for an item
+        that cannot be bought with currency. ``max_owned`` left out: 1 for a durable item, no limit for a consumable;
+        ``None``: no limit. After a network error, a timeout or a ``5xx`` the outcome is unknown: read the item back with
+        :meth:`get`.
+        """
+        body: Dict[str, Any] = {
+            "sku": b.text(sku, "sku"),
+            "name": b.text(name, "name"),
+            "type": b.choice(type, "type", ("consumable", "durable")),
+        }
+        if description is not None:
+            body["description"] = b.nullable_text(description, "description")
+        if price is not None:
+            body["price"] = b.price(price, "price")
+        if max_owned is not UNSET:
+            body["maxOwned"] = b.nullable_integer(max_owned, "max_owned", 1)
+        if client_purchasable is not None:
+            body["clientPurchasable"] = b.boolean(client_purchasable, "client_purchasable")
+        if metadata is not None:
+            body["metadata"] = b.string_map(metadata, "metadata")
+        return self._core.request("POST", "/items", lambda d, _: ManagedItem.from_api(d), body=body, retry=RETRY_RATE_LIMIT_ONLY)
+
+    def get(self, sku: str) -> ManagedItem:
+        """An item, archived ones included; ``NOT_FOUND`` for an unknown sku."""
+        return self._core.request("GET", self._path(sku), lambda d, _: ManagedItem.from_api(d))
+
+    def update(
+        self,
+        sku: str,
+        *,
+        name: Union[str, _Unset] = UNSET,
+        description: Union[str, None, _Unset] = UNSET,
+        price: Union[Price, Mapping[str, Any], None, _Unset] = UNSET,
+        max_owned: Union[int, None, _Unset] = UNSET,
+        client_purchasable: Union[bool, _Unset] = UNSET,
+        metadata: Union[Mapping[str, str], _Unset] = UNSET,
+    ) -> ManagedItem:
+        """Changes an item: an argument left out is unchanged; ``None`` clears the description, the price or the limit.
+        ``metadata`` replaces the whole mapping. The sku and the type are final. An archived item cannot be changed
+        (``CONFLICT``)."""
+        path = self._path(sku)
+        body = _managed_body(
+            {
+                "name": UNSET if name is UNSET else b.text(name, "name"),
+                "description": UNSET if description is UNSET else b.nullable_text(description, "description"),
+                "price": UNSET if price is UNSET else b.price(price, "price"),
+                "maxOwned": UNSET if max_owned is UNSET else b.nullable_integer(max_owned, "max_owned", 1),
+                "clientPurchasable": UNSET
+                if client_purchasable is UNSET
+                else b.boolean(client_purchasable, "client_purchasable"),
+                "metadata": UNSET if metadata is UNSET else b.string_map(metadata, "metadata"),
+            }
+        )
+        return self._core.request("PATCH", path, lambda d, _: ManagedItem.from_api(d), body=body)
+
+    def archive(self, sku: str) -> ManagedItem:
+        """Archives an item (nothing is deleted; inventories keep it) and returns it. Refused with ``CONFLICT``
+        (``details["blockedBy"]["packs"]``) while an active pack contains it. Archiving an archived item has no effect."""
+        return self._core.request("DELETE", self._path(sku), lambda d, _: ManagedItem.from_api(d))
+
+    def list(self, *, include_archived: bool = False) -> List[ManagedItem]:
+        """The items of the game, oldest first; the archived ones only with ``include_archived=True``."""
+        query = b.include_archived(include_archived)
+        return self._core.request("GET", "/items", lambda d, _: [ManagedItem.from_api(i) for i in d["items"]], query=query)
+
+
+class PacksResource(_Resource):
+    """The packs of the game: ``create``, ``get``, ``update``, ``archive``, ``list``."""
+
+    @staticmethod
+    def _path(sku: str) -> str:
+        return f"/packs/{v.segment(v.require_str(sku, 'sku'))}"
+
+    def create(
+        self,
+        *,
+        sku: str,
+        name: str,
+        price_cents: int,
+        description: Optional[str] = None,
+        grants: Optional[Sequence[Union[PackGrant, Mapping[str, Any]]]] = None,
+        items: Optional[Sequence[Union[PackItem, Mapping[str, Any]]]] = None,
+        badge: Optional[str] = None,
+        max_per_player: Optional[int] = None,
+        sort_order: Optional[int] = None,
+        availability: Union[ManagedPackAvailability, Mapping[str, Any], None] = None,
+        status: Optional[str] = None,
+    ) -> ManagedPack:
+        """Creates a pack, as a draft unless ``status`` is ``"active"``. Its ``sku`` is final. ``price_cents`` is in euro
+        cents, VAT included (50 to 50,000). ``grants`` are ``{"currency", "amount", "bonus"}`` lines, ``items`` are
+        ``{"sku", "quantity"}`` lines; a pack needs at least one of the two. A taken sku is ``CONFLICT``; an invalid pack
+        is ``VALIDATION_FAILED`` with the faulty lines in ``details["fieldErrors"]``.
+
+        ``availability`` is a mapping ``{"starts_at", "ends_at", "stock", "founder"}`` (datetimes with a time zone or ISO
+        8601 strings; a key left out is ``None``, ``founder`` ``False``). After a network error, a timeout or a ``5xx``
+        the outcome is unknown: read the pack back with :meth:`get`.
+        """
+        body: Dict[str, Any] = {
+            "sku": b.text(sku, "sku"),
+            "name": b.text(name, "name"),
+            "priceCents": b.integer(price_cents, "price_cents", 0),
+        }
+        if description is not None:
+            body["description"] = b.nullable_text(description, "description")
+        if grants is not None:
+            body["grants"] = b.grants(grants, "grants")
+        if items is not None:
+            body["items"] = b.pack_items(items, "items")
+        if badge is not None:
+            body["badge"] = b.choice(badge, "badge", b.BADGES)
+        if max_per_player is not None:
+            body["maxPerPlayer"] = b.integer(max_per_player, "max_per_player", 1)
+        if sort_order is not None:
+            body["sortOrder"] = b.integer(sort_order, "sort_order", -(2**53))
+        if availability is not None:
+            body["availability"] = b.availability(availability, "availability")
+        if status is not None:
+            body["status"] = b.choice(status, "status", ("draft", "active"))
+        return self._core.request("POST", "/packs", lambda d, _: ManagedPack.from_api(d), body=body, retry=RETRY_RATE_LIMIT_ONLY)
+
+    def get(self, sku: str) -> ManagedPack:
+        """A pack, archived ones included; ``NOT_FOUND`` for an unknown sku."""
+        return self._core.request("GET", self._path(sku), lambda d, _: ManagedPack.from_api(d))
+
+    def update(
+        self,
+        sku: str,
+        *,
+        name: Union[str, _Unset] = UNSET,
+        description: Union[str, None, _Unset] = UNSET,
+        price_cents: Union[int, _Unset] = UNSET,
+        grants: Union[Sequence[Union[PackGrant, Mapping[str, Any]]], _Unset] = UNSET,
+        items: Union[Sequence[Union[PackItem, Mapping[str, Any]]], _Unset] = UNSET,
+        badge: Union[str, None, _Unset] = UNSET,
+        max_per_player: Union[int, None, _Unset] = UNSET,
+        sort_order: Union[int, _Unset] = UNSET,
+        availability: Union[ManagedPackAvailability, Mapping[str, Any], _Unset] = UNSET,
+        status: Union[str, _Unset] = UNSET,
+    ) -> ManagedPack:
+        """Changes a pack: an argument left out is unchanged; ``None`` clears the description, the badge or the limit.
+        ``grants``, ``items`` and ``availability`` replace the previous value as a whole (``availability={}`` removes
+        every limit). The content is applied first, then ``status`` (``"draft"``, ``"active"`` or ``"archived"``); turning
+        a pack active checks that every currency and item it uses is still active, and when that check fails the content
+        change stays and the status does not move. An archived pack cannot be changed (``CONFLICT``), except to bring it
+        back with ``status`` alone."""
+        path = self._path(sku)
+        body = _managed_body(
+            {
+                "name": UNSET if name is UNSET else b.text(name, "name"),
+                "description": UNSET if description is UNSET else b.nullable_text(description, "description"),
+                "priceCents": UNSET if price_cents is UNSET else b.integer(price_cents, "price_cents", 0),
+                "grants": UNSET if grants is UNSET else b.grants(grants, "grants"),
+                "items": UNSET if items is UNSET else b.pack_items(items, "items"),
+                "badge": UNSET if badge is UNSET else b.nullable_choice(badge, "badge", b.BADGES),
+                "maxPerPlayer": UNSET if max_per_player is UNSET else b.nullable_integer(max_per_player, "max_per_player", 1),
+                "sortOrder": UNSET if sort_order is UNSET else b.integer(sort_order, "sort_order", -(2**53)),
+                "availability": UNSET if availability is UNSET else b.availability(availability, "availability"),
+                "status": UNSET if status is UNSET else b.choice(status, "status", b.PACK_STATUSES),
+            }
+        )
+        if body.get("availability", 0) is None:
+            raise TypeError("availability must be a mapping (use {} to remove every limit), not None")
+        return self._core.request("PATCH", path, lambda d, _: ManagedPack.from_api(d), body=body)
+
+    def archive(self, sku: str) -> ManagedPack:
+        """Archives a pack (it is no longer sold; the orders already placed are unaffected) and returns it."""
+        return self._core.request("DELETE", self._path(sku), lambda d, _: ManagedPack.from_api(d))
+
+    def list(self, *, include_archived: bool = False) -> List[ManagedPack]:
+        """The packs of the game in display order, drafts included; the archived ones only with ``include_archived=True``."""
+        query = b.include_archived(include_archived)
+        return self._core.request("GET", "/packs", lambda d, _: [ManagedPack.from_api(p) for p in d["packs"]], query=query)

@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - Unreleased
+
+0.4.0 — catalog management: create, change and archive currencies, items and packs.
+
+### Added
+
+- Three resources, `currencies`, `items` and `packs`, each with `create`, `get`, `update`, `archive` and `list`: the catalog
+  management API (`/currencies`, `/items`, `/packs`). Twelve resources and thirty-two calls in all.
+- Results `ManagedCurrency`, `ManagedItem` and `ManagedPack` (the catalog objects plus `status`, `created_at` and
+  `updated_at`; a pack also has `sort_order` and `availability` as `ManagedPackAvailability(starts_at, ends_at, stock,
+  founder, sold)`), and the `CatalogStatus` and `PackStatus` string values.
+- `update` follows the `players.upsert` convention: an argument left out is unchanged (`UNSET`), `None` clears a
+  description, a price or a limit. `grants`, `items`, `metadata` and `availability` replace the old value as a whole.
+- `archive` returns the archived resource; `list` leaves archived ones out unless `include_archived=True`.
+- `availability` takes a mapping (`starts_at`, `ends_at`, `stock`, `founder`; timezone-aware datetimes or ISO 8601 strings)
+  or the `ManagedPackAvailability` read back from a pack; a key left out is `None` (`founder`: `False`).
+
+### Notes
+
+- The catalog is shared by the `test` and `live` environments of the game: a resource created with a test key exists for
+  live keys too.
+- A create has no idempotency key (the code or sku is its natural key; a taken one is `CONFLICT` with `SKU_TAKEN` or
+  `CODE_TAKEN`), so it is retried on `429` only, like `orders.refund`. Updates, archives and reads follow the usual rules.
+
 ## [0.3.0] - Unreleased
 
 0.3.0 — gift codes; creator code on checkouts; pack availability.

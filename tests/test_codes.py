@@ -300,12 +300,12 @@ class PublicSurfaceTests(unittest.TestCase):
         for name in ("OrderCreatorCode", "PackAvailability", "RedeemedGrant", "RedeemedItem", "Redemption"):
             self.assertIn(name, gamecoin.__all__)
             self.assertTrue(hasattr(gamecoin, name))
-        self.assertEqual(gamecoin.__version__, "0.3.0")
+        self.assertEqual(gamecoin.__version__, "0.4.0")
 
     def test_user_agent_carries_the_version(self):
         client, transport, _ = make_client(ok(catalog_json()))
         client.catalog.get()
-        self.assertTrue(transport.last.headers["User-Agent"].startswith("gamecoin-python/0.3.0 "))
+        self.assertTrue(transport.last.headers["User-Agent"].startswith("gamecoin-python/0.4.0 "))
 
 
 if __name__ == "__main__":

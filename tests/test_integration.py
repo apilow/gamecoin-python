@@ -122,6 +122,67 @@ class SandboxIntegrationTests(unittest.TestCase):
                 fetched = self.gamecoin.players.get(ext(external_id))
                 self.assertEqual((fetched.id, fetched.external_id), (created.id, external_id))
 
+    def test_catalog_management(self):
+        gc = self.gamecoin
+        # A fresh suffix for every run: a code or a sku is never reusable, even once archived.
+        suffix = uuid.uuid4().hex[:10]
+        code, item_sku, pack_sku = f"ruby_{suffix}", f"elixir-{suffix}", f"mega-{suffix}"
+
+        currency = gc.currencies.create(code=code, name="Ruby", purchasable=True)
+        self.assertEqual((currency.status, currency.purchasable), ("active", True))
+        self.assertEqual(gc.currencies.update(code, name="Red ruby").name, "Red ruby")
+
+        item = gc.items.create(
+            sku=item_sku, name="Elixir", type="consumable", price={"currency": code, "amount": 15}, client_purchasable=True, metadata={"heal": "30"}
+        )
+        self.assertEqual((item.price.currency, item.price.amount, item.max_owned), (code, 15, None))
+        self.assertEqual(gc.items.update(item_sku, price={"currency": code, "amount": 25}).price.amount, 25)
+
+        pack = gc.packs.create(
+            sku=pack_sku,
+            name="Mega pack",
+            price_cents=999,
+            grants=[{"currency": code, "amount": 1200, "bonus": 100}],
+            items=[{"sku": item_sku, "quantity": 2}],
+            badge="best_value",
+        )
+        self.assertEqual((pack.status, pack.availability), ("draft", None))
+
+        starts = datetime(2030, 1, 1, tzinfo=timezone.utc)
+        live = gc.packs.update(pack_sku, price_cents=1099, status="active", availability={"starts_at": starts, "stock": 50, "founder": True})
+        self.assertEqual(live.status, "active")
+        self.assertEqual((live.availability.starts_at, live.availability.ends_at, live.availability.stock, live.availability.founder, live.availability.sold), (starts, None, 50, True, 0))
+        public = {p.sku: p for p in gc.catalog.get().packs}[pack_sku]
+        self.assertEqual(public.availability.remaining, 50)
+        self.assertIn(item_sku, [i.sku for i in gc.items.list()])
+
+        # Archiving goes top-down: a pack, then the item it holds, then the currency.
+        self.assertEqual(gc.packs.archive(pack_sku).status, "archived")
+        self.assertEqual(gc.items.archive(item_sku).status, "archived")
+        self.assertEqual(gc.currencies.archive(code).status, "archived")
+        self.assertEqual(gc.currencies.archive(code).status, "archived")
+        self.assertEqual(gc.currencies.get(code).status, "archived")
+        self.assertNotIn(code, [c.code for c in gc.currencies.list()])
+        self.assertIn(code, [c.code for c in gc.currencies.list(include_archived=True)])
+        left = gc.catalog.get()
+        self.assertNotIn(code, [c.code for c in left.currencies])
+        self.assertNotIn(pack_sku, [p.sku for p in left.packs])
+
+        with self.assertRaises(GameCoinError) as taken:
+            gc.currencies.create(code="gems", name="Again")
+        self.assertEqual(taken.exception.code, ErrorCode.CONFLICT)
+        self.assertEqual(taken.exception.details["fieldErrors"], {"code": ["CODE_TAKEN"]})
+        with self.assertRaises(GameCoinError) as blocked:
+            gc.currencies.archive("gems")
+        self.assertEqual(blocked.exception.code, ErrorCode.CONFLICT)
+        self.assertIn("blockedBy", blocked.exception.details)
+        with self.assertRaises(GameCoinError) as invalid:
+            gc.packs.create(sku=f"empty-{suffix}", name="Empty", price_cents=500)
+        self.assertEqual(invalid.exception.code, ErrorCode.VALIDATION_FAILED)
+        with self.assertRaises(GameCoinError) as missing:
+            gc.items.get(f"nope-{suffix}")
+        self.assertEqual(missing.exception.code, ErrorCode.NOT_FOUND)
+
     def test_a_wrong_key_is_unauthenticated(self):
         wrong = GameCoin("gc_sk_test_" + "x" * 43, base_url=BASE_URL, max_retries=0)
         with self.assertRaises(GameCoinError) as caught:

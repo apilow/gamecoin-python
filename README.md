@@ -173,6 +173,45 @@ for pack in catalog.packs:
         print(pack.sku, "is sold out")
 ```
 
+## Manage the catalog
+
+`currencies`, `items` and `packs` create, change and archive the catalog, the way a payment platform manages its products and
+prices. Each has `create`, `get`, `update`, `archive` and `list`.
+
+> The catalog is shared by the `test` and `live` environments of the game: a pack created with a test key exists for live keys
+> too. Create a new pack as a draft (the default) and turn it on with `status="active"` when it is ready.
+
+```python
+gamecoin.currencies.create(code="rubies", name="Rubies")
+gamecoin.items.create(sku="elixir", name="Elixir", type="consumable", price={"currency": "gems", "amount": 15})
+
+pack = gamecoin.packs.create(
+    sku="mega",
+    name="Mega pack",
+    price_cents=999,
+    grants=[{"currency": "gems", "amount": 1200, "bonus": 100}],
+    items=[{"sku": "elixir", "quantity": 2}],
+)
+print(pack.status)  # "draft"
+
+gamecoin.packs.update(
+    "mega",
+    price_cents=1099,
+    availability={"starts_at": datetime(2026, 11, 1, tzinfo=timezone.utc), "stock": 500, "founder": True},  # replaces the whole availability
+    status="active",
+)
+gamecoin.items.update("elixir", price=None)  # None clears a description, a price or a limit
+gamecoin.packs.archive("mega")  # nothing is deleted
+everything = gamecoin.packs.list(include_archived=True)
+```
+
+An argument you leave out of `update` is unchanged. The identifiers (`code`, `sku`) and the `type` of an item are final, so
+`update` has no argument for them. A taken identifier is `CONFLICT` with `details["fieldErrors"]["sku"] == ["SKU_TAKEN"]`
+(`["CODE_TAKEN"]` for a currency); an invalid pack is `VALIDATION_FAILED` with the faulty lines in `details["fieldErrors"]`;
+archiving something that an active pack still uses is `CONFLICT` with `details["blockedBy"]`. A create has no idempotency key
+(the identifier is its natural key), so it is retried on `429` only: after a network error, a timeout or a `5xx`, read the
+resource back with `get` before you try again.
+
 ## Checkout, orders and refunds
 
 A **pack** is sold for real money. `checkouts.create` opens an order and returns the hosted payment page; send the
@@ -430,7 +469,7 @@ GAMECOIN_SECRET_KEY=gc_sk_test_... GAMECOIN_BASE_URL=http://localhost:3400 pytho
 
 ## Status
 
-**Pre-release (0.3.0).** The API runs in test mode with simulated payments; real payments are not available yet.
+**Pre-release (0.4.0).** The API runs in test mode with simulated payments; real payments are not available yet.
 This SDK is synchronous only.
 
 ## Licence

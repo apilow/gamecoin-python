@@ -563,3 +563,130 @@ class Redemption:
             skipped=tuple(RedeemedItem.from_api(i) for i in data["skipped"]),
             replayed=replayed,
         )
+
+
+# --- Catalog management ----------------------------------------------------------------------------------------
+# What ``gamecoin.currencies``, ``gamecoin.items`` and ``gamecoin.packs`` return: the catalog objects plus the status,
+# the dates and, for a pack, the raw availability settings. Archived resources and draft packs are visible here.
+
+
+class CatalogStatus:
+    """``archived`` currencies and items are no longer offered, creditable or buyable; balances and inventories stay."""
+
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+class PackStatus:
+    """A ``draft`` pack is not sold; an ``active`` one is; an ``archived`` one no longer is."""
+
+    DRAFT = "draft"
+    ACTIVE = "active"
+    ARCHIVED = "archived"
+
+
+@dataclass(frozen=True)
+class ManagedCurrency(Currency):
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "ManagedCurrency":
+        return cls(
+            code=data["code"],
+            name=data["name"],
+            purchasable=bool(data["purchasable"]),
+            status=data["status"],
+            created_at=parse_datetime(data["createdAt"]),
+            updated_at=parse_datetime(data["updatedAt"]),
+        )
+
+
+@dataclass(frozen=True)
+class ManagedItem(Item):
+    status: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "ManagedItem":
+        item = Item.from_api(data)
+        return cls(
+            sku=item.sku,
+            name=item.name,
+            description=item.description,
+            type=item.type,
+            price=item.price,
+            max_owned=item.max_owned,
+            client_purchasable=item.client_purchasable,
+            metadata=item.metadata,
+            status=data["status"],
+            created_at=parse_datetime(data["createdAt"]),
+            updated_at=parse_datetime(data["updatedAt"]),
+        )
+
+
+@dataclass(frozen=True)
+class ManagedPackAvailability:
+    """The sale settings of a pack as written, with the units delivered so far (``sold``).
+
+    ``stock`` is the total that can be sold (``None``: unlimited). The public catalog shows ``remaining`` instead.
+    """
+
+    starts_at: Optional[datetime]
+    ends_at: Optional[datetime]
+    stock: Optional[int]
+    founder: bool
+    sold: int
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "ManagedPackAvailability":
+        return cls(
+            starts_at=_optional_datetime(data.get("startsAt")),
+            ends_at=_optional_datetime(data.get("endsAt")),
+            stock=data.get("stock"),
+            founder=bool(data["founder"]),
+            sold=data["sold"],
+        )
+
+
+@dataclass(frozen=True)
+class ManagedPack:
+    """A pack as ``packs`` manages it: the fields of :class:`Pack` (``availability`` aside), the display order, the
+    status and the dates. ``availability`` is ``None`` for an ordinary pack."""
+
+    sku: str
+    name: str
+    description: Optional[str]
+    price_cents: int
+    currency: str
+    grants: Tuple[PackGrant, ...]
+    items: Tuple[PackItem, ...]
+    badge: Optional[str]
+    max_per_player: Optional[int]
+    sort_order: int
+    status: str
+    availability: Optional[ManagedPackAvailability]
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_api(cls, data: Mapping[str, Any]) -> "ManagedPack":
+        availability = data.get("availability")
+        return cls(
+            sku=data["sku"],
+            name=data["name"],
+            description=data.get("description"),
+            price_cents=data["priceCents"],
+            currency=data["currency"],
+            grants=tuple(PackGrant.from_api(g) for g in data["grants"]),
+            items=tuple(PackItem.from_api(i) for i in data["items"]),
+            badge=data.get("badge"),
+            max_per_player=data.get("maxPerPlayer"),
+            sort_order=data["sortOrder"],
+            status=data["status"],
+            availability=None if availability is None else ManagedPackAvailability.from_api(availability),
+            created_at=parse_datetime(data["createdAt"]),
+            updated_at=parse_datetime(data["updatedAt"]),
+        )
