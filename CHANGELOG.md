@@ -23,8 +23,7 @@ All notable changes to this project are documented here. The format follows
 
 ### Notes
 
-- The catalog is shared by the `test` and `live` environments of the game: a resource created with a test key exists for
-  live keys too.
+- Each environment has its own catalog: a resource created with a test key exists in `test` only, and a live key never sees it.
 - A create has no idempotency key (the code or sku is its natural key; a taken one is `CONFLICT` with `SKU_TAKEN` or
   `CODE_TAKEN`), so it is retried on `429` only, like `orders.refund`. Updates, archives and reads follow the usual rules.
 

@@ -178,8 +178,7 @@ for pack in catalog.packs:
 `currencies`, `items` and `packs` create, change and archive the catalog, the way a payment platform manages its products and
 prices. Each has `create`, `get`, `update`, `archive` and `list`.
 
-> The catalog is shared by the `test` and `live` environments of the game: a pack created with a test key exists for live keys
-> too. Create a new pack as a draft (the default) and turn it on with `status="active"` when it is ready.
+> Each environment has its own catalog: the key decides which one you change, and a pack created with a test key exists in `test` only. Create a new pack as a draft (the default) and turn it on with `status="active"` when it is ready.
 
 ```python
 gamecoin.currencies.create(code="rubies", name="Rubies")

@@ -378,8 +378,7 @@ def _item_body(sku: str, quantity: Optional[int]) -> Dict[str, Any]:
 
 
 # --- Catalog management ----------------------------------------------------------------------------------------
-# The catalog is shared by the ``test`` and ``live`` environments of the game: a resource created with a test key exists
-# for live keys too. The code or the sku is the natural key of a create (a taken one is ``CONFLICT``), so a create has no
+# Each environment has its own catalog: a resource created with a test key exists in ``test`` only. The code or the sku is the natural key of a create (a taken one is ``CONFLICT``), so a create has no
 # idempotency key and is retried on ``429`` only, like a refund; changes, archives and reads are retried as usual.
 
 
