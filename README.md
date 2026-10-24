@@ -2,7 +2,7 @@
 
 **The bank of your game.** GameCoin keeps the virtual currency, the inventory and the sales of your web or mobile
 game behind one API. This is the **server** SDK: it runs in your game's backend, holds a **secret key**, and is the
-only place that can credit coins. (The browser SDK uses a publishable key and can never credit anything.)
+only place that can credit coins. (The browser SDK uses a publishable key and can never credit anything.) Full documentation: [gamecoin.apilow.com/docs/sdk/python](https://gamecoin.apilow.com/docs/sdk/python).
 
 - Pure standard library: **no dependency**, Python 3.9 and later.
 - Typed (`py.typed`): frozen dataclasses for every object, timezone-aware `datetime` fields.
@@ -214,7 +214,7 @@ resource back with `get` before you try again.
 ## Checkout, orders and refunds
 
 A **pack** is sold for real money. `checkouts.create` opens an order and returns the hosted payment page; send the
-player there. In the test environment the page offers "Pay (simulated)" and "Decline".
+player there. In the test environment the page offers "Pay (simulated)" and "Decline"; with a live key it takes a real payment.
 
 ```python
 checkout = gamecoin.checkouts.create(
@@ -468,7 +468,7 @@ GAMECOIN_SECRET_KEY=gc_sk_test_... GAMECOIN_BASE_URL=http://localhost:3400 pytho
 
 ## Status
 
-**Pre-release (0.4.0).** The API runs in test mode with simulated payments; real payments are not available yet.
+**Pre-release (0.4.0).** The API has a test environment (simulated payments) and a live environment (real payments), reserved for verified studios.
 This SDK is synchronous only.
 
 ## Licence
